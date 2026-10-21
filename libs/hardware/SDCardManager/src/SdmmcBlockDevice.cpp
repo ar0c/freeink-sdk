@@ -40,6 +40,7 @@ constexpr uint32_t kSdmmcRetrySettleMs = 0;
 }  // namespace
 
 bool SdmmcBlockDevice::begin(const BoardConfig::SdmmcPins& pins) {
+  _readAheadSectors = 0;
   if (pins.busWidth == 0) return false;
   // The sleep path may hold the bus pads (Picco); a held pad ignores the slot setup.
   for (const int8_t pin : {pins.clk, pins.cmd, pins.d0, pins.d1, pins.d2, pins.d3}) {
@@ -188,6 +189,7 @@ bool SdmmcBlockDevice::begin(const BoardConfig::SdmmcPins& pins) {
 }
 
 void SdmmcBlockDevice::end() {
+  _readAheadSectors = 0;
   if (_card) {
     free(_card);
     _card = nullptr;
@@ -205,6 +207,34 @@ void SdmmcBlockDevice::end() {
 // through a DMA-capable buffer. (heap_caps_aligned_alloc via MALLOC_CAP_DMA.)
 bool SdmmcBlockDevice::readSectors(Sector_t sector, uint8_t* dst, size_t ns) {
   if (!_card || !_dmaBuffer || !dst || ns == 0) return false;
+  const Sector_t capacity = sectorCount();
+  if (sector >= capacity || ns > capacity - sector) return false;
+  if (ns == 1) {
+    if (_readAheadSectors && sector >= _readAheadSector && sector - _readAheadSector < _readAheadSectors) {
+      memcpy(dst, _dmaBuffer + (sector - _readAheadSector) * kSectorSize, kSectorSize);
+      return true;
+    }
+    // SdFat scans FAT entries through a one-sector cache. Only prefetch after
+    // an adjacent read, so random metadata/font reads retain their small cost.
+    const bool sequential = _readAheadSectors && sector >= _readAheadSector &&
+                            sector - _readAheadSector == _readAheadSectors;
+    size_t count = sequential ? kMaxTransferSectors : 1;
+    if (count > capacity - sector) count = capacity - sector;
+    _readAheadSectors = 0;
+    if (sdmmc_read_sectors(static_cast<sdmmc_card_t*>(_card), _dmaBuffer, sector, count) != ESP_OK) {
+      // A speculative neighbour may be unreadable while the requested sector
+      // is valid. Retry only that read; never hide an error in requested data.
+      if (count == 1 || sdmmc_read_sectors(static_cast<sdmmc_card_t*>(_card), _dmaBuffer, sector, 1) != ESP_OK) {
+        return false;
+      }
+      count = 1;
+    }
+    _readAheadSector = sector;
+    _readAheadSectors = count;
+    memcpy(dst, _dmaBuffer, kSectorSize);
+    return true;
+  }
+  _readAheadSectors = 0;
   while (ns > 0) {
     const size_t count = ns > kMaxTransferSectors ? kMaxTransferSectors : ns;
     const size_t bytes = count * kSectorSize;
@@ -218,7 +248,12 @@ bool SdmmcBlockDevice::readSectors(Sector_t sector, uint8_t* dst, size_t ns) {
 }
 
 bool SdmmcBlockDevice::writeSectors(Sector_t sector, const uint8_t* src, size_t ns) {
+  // Invalidate even on a failed write: the bounce buffer may already have been
+  // overwritten, and a partial native write can have changed the card.
+  _readAheadSectors = 0;
   if (!_card || !_dmaBuffer || !src || ns == 0) return false;
+  const Sector_t capacity = sectorCount();
+  if (sector >= capacity || ns > capacity - sector) return false;
   while (ns > 0) {
     const size_t count = ns > kMaxTransferSectors ? kMaxTransferSectors : ns;
     const size_t bytes = count * kSectorSize;

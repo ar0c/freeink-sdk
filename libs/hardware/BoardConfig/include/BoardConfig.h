@@ -364,7 +364,8 @@
 #endif
 #ifndef FREEINK_CAP_IMU
 #define FREEINK_CAP_IMU \
-  (FREEINK_DEVICE_X3 || FREEINK_DEVICE_STICKY || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO)
+  (FREEINK_DEVICE_X3 || FREEINK_DEVICE_STICKY || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || \
+   FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_PICCO || FREEINK_DEVICE_WAVESHARE_EPAPER_397)
 #endif
 // LEDC PWM buzzer (tone beeper). The Buzzer lib drives the AudioConfig.buzzer
 // pin; on for boards that wire one (Sticky GPIO48, Murphy GPIO46, PaperS3
@@ -1949,7 +1950,9 @@ constexpr BoardProfile WAVESHARE_EPAPER_397 = {
     {16, 17, 15, 7, 8, 18, 4},
     NO_GAUGE,
     NO_MIC,
-    {41, 42, 400000, 0x51, 0, 0, 0, RtcType::Pcf85063, ImuType::None},
+    // Physical portrait has gravity on raw +X. Normalize it to board +Y;
+    // keep the mount transform in the BSP rather than in reader policy.
+    {41, 42, 400000, 0x51, 0, 0x6B, 0, RtcType::Pcf85063, ImuType::Qmi8658, true, false, false},
     1.0f,
     {}};
 

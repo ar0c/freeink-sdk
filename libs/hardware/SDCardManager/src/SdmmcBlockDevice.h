@@ -50,6 +50,10 @@ class SdmmcBlockDevice : public FsBlockDeviceInterface {
   // type). Hold it opaquely and cast in the .cpp, where the esp-idf header is included.
   void* _card = nullptr;
   uint8_t* _dmaBuffer = nullptr;
+  // Reuse the existing DMA bounce buffer for sequential single-sector reads.
+  // Any write or explicit bulk read invalidates this span before reusing it.
+  Sector_t _readAheadSector = 0;
+  size_t _readAheadSectors = 0;
 };
 
 }  // namespace freeink
