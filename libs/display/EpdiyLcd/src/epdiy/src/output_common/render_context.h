@@ -36,6 +36,10 @@ typedef struct {
     TaskHandle_t feed_tasks[NUM_RENDER_THREADS];
     SemaphoreHandle_t feed_done_smphr[NUM_RENDER_THREADS];
     SemaphoreHandle_t frame_done;
+#if CONFIG_IDF_TARGET_ESP32S31
+    SemaphoreHandle_t feed_space[NUM_RENDER_THREADS];
+    atomic_int ready_lines[NUM_RENDER_THREADS];
+#endif
     /// Line buffers for feed tasks
     uint8_t* feed_line_buffers[NUM_RENDER_THREADS];
 
@@ -52,7 +56,11 @@ typedef struct {
 
     const EpdWaveform* waveform;
     enum EpdDrawMode mode;
+#if CONFIG_IDF_TARGET_ESP32S31
+    atomic_uint error;
+#else
     enum EpdDrawError error;
+#endif
 
     // Lookup table size.
     size_t conversion_lut_size;

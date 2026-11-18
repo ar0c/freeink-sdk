@@ -19,7 +19,7 @@ typedef struct {
     int max;
 } EpdWaveformTempInterval;
 
-typedef struct {
+typedef struct EpdWaveform {
     uint8_t num_modes;
     uint8_t num_temp_ranges;
     EpdWaveformMode const** mode_data;

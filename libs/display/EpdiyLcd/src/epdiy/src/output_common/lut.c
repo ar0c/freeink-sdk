@@ -3,7 +3,6 @@
 #include "epdiy.h"
 #include "esp_attr.h"
 #include "render_context.h"
-#include "render_method.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -136,8 +135,14 @@ __attribute__((optimize("O3"))) void IRAM_ATTR calc_epd_input_8ppB(
         }
         epd_input[(epd_width / 16) * 4 + j] = lut_32[nibble];
     }
+#if CONFIG_IDF_TARGET_ESP32S31
+    for (uint32_t j = 0; j < epd_width / 4; j++) {
+        epd_input[j] = epd_lcd_order_drive_pairs(epd_input[j]);
+    }
+#endif
 }
 
+#if CONFIG_IDF_TARGET_ESP32S3
 /**
  * Look up 4 pixels of a differential image in a LUT constructed for use with vector extensions.
  */
@@ -188,6 +193,18 @@ void IRAM_ATTR calc_epd_input_1ppB_1k_S3_VE(
         }
     }
 }
+#elif CONFIG_IDF_TARGET_ESP32S31
+__attribute__((optimize("O3"))) static void IRAM_ATTR calc_epd_input_1ppB_1k_s31(
+    const uint32_t* line_data, uint8_t* epd_input, const uint8_t* lut, uint32_t epd_width
+) {
+    // Byte loads accept any row alignment. Native S31 D0..D7 use MSB-first pixel pairs.
+    const uint8_t* pixels = (const uint8_t*)line_data;
+    for (uint32_t x = 0; x < epd_width; x += 4) {
+        *epd_input++ = lut[3 * 256 + pixels[x]] | lut[2 * 256 + pixels[x + 1]]
+            | lut[256 + pixels[x + 2]] | lut[pixels[x + 3]];
+    }
+}
+#endif
 
 /**
  * Calculate EPD input for a difference image with one pixel per byte.
@@ -197,7 +214,9 @@ __attribute__((optimize("O3"))) void IRAM_ATTR calc_epd_input_1ppB_64k(
 ) {
     const uint16_t* lp = (uint16_t*)ld;
     for (uint32_t j = 0; j < epd_width / 4; j++) {
-        epd_input[j] = (conversion_lut[lp[2 * j + 1]] << 4) | conversion_lut[lp[2 * j]];
+        epd_input[j] = epd_lcd_order_drive_pairs(
+            (conversion_lut[lp[2 * j + 1]] << 4) | conversion_lut[lp[2 * j]]
+        );
     }
 }
 
@@ -207,7 +226,7 @@ __attribute__((optimize("O3"))) void IRAM_ATTR calc_epd_input_2ppB_lut_64k(
     const uint16_t* line_data_16 = (const uint16_t*)line_data;
 
     for (uint32_t j = 0; j < epd_width / 4; j++) {
-        epd_input[j] = conversion_lut[*(line_data_16++)];
+        epd_input[j] = epd_lcd_order_drive_pairs(conversion_lut[*(line_data_16++)]);
     }
 }
 
@@ -246,7 +265,9 @@ __attribute__((optimize("O3"))) void IRAM_ATTR calc_epd_input_2ppB_1k_lut(
     const uint16_t* line_data_16 = (const uint16_t*)ld;
 
     for (uint32_t j = 0; j < epd_width / 4; j++) {
-        epd_input[j] = lookup_pixels_2ppB_1k(*(line_data_16++), conversion_lut, from);
+        epd_input[j] = epd_lcd_order_drive_pairs(
+            lookup_pixels_2ppB_1k(*(line_data_16++), conversion_lut, from)
+        );
     };
 }
 
@@ -327,10 +348,13 @@ build_1ppB_lut_64k(uint8_t* lut, const EpdWaveformPhases* phases, int frame) {
 }
 
 /**
- * A 32bit aligned lookup table for lookup using the ESP32-S3 vector extensions.
+ * Prepare the format used by the platform's 1 KiB differential lookup.
  */
 __attribute__((optimize("O3"))) void IRAM_ATTR
 epd_build_1ppB_lut_1k(uint8_t* lut, const EpdWaveformPhases* phases, int frame) {
+#if CONFIG_IDF_TARGET_ESP32S31
+    build_2ppB_lut_1k(lut, phases, frame);
+#else
     uint32_t* lut32 = (uint32_t*)lut;
     const uint8_t* p_lut = phases->luts + (16 * 4 * frame);
     for (uint8_t to = 0; to < 16; to++) {
@@ -343,6 +367,7 @@ epd_build_1ppB_lut_1k(uint8_t* lut, const EpdWaveformPhases* phases, int frame) 
             lut32[index + 3] = (packed >> 0) & 3;
         }
     }
+#endif
 }
 
 /**
@@ -423,6 +448,13 @@ LutFunctionPair find_lut_functions(enum EpdDrawMode mode, uint32_t lut_size) {
     pair.lookup_func = NULL;
 
     if (mode & MODE_PACKING_1PPB_DIFFERENCE) {
+#if CONFIG_IDF_TARGET_ESP32S31
+        if (lut_size >= EPD_1PPB_LUT_1K_SIZE) {
+            pair.build_func = &epd_build_1ppB_lut_1k;
+            pair.lookup_func = &calc_epd_input_1ppB_1k_s31;
+            return pair;
+        }
+#else
         if (!(mode & MODE_FORCE_NO_PIE) && lut_size >= 1024) {
             pair.build_func = &epd_build_1ppB_lut_1k;
             pair.lookup_func = &calc_epd_input_1ppB_1k_S3_VE;
@@ -432,6 +464,7 @@ LutFunctionPair find_lut_functions(enum EpdDrawMode mode, uint32_t lut_size) {
             pair.lookup_func = &calc_epd_input_1ppB_64k;
             return pair;
         }
+#endif
     } else if (mode & MODE_PACKING_2PPB) {
         if (lut_size >= 1 << 16) {
             if (mode & PREVIOUSLY_WHITE) {

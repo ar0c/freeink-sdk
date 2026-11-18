@@ -8,6 +8,7 @@
 
 #include <esp_idf_version.h>
 #include <esp_log.h>
+#if CONFIG_IDF_TARGET_ESP32S3
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
 #if __has_include(<rom/cache.h>)
 #include <rom/cache.h>
@@ -16,6 +17,7 @@
 #endif
 #else
 #include <rom/cache.h>
+#endif
 #endif
 
 #include "../epd_internals.h"
@@ -27,8 +29,18 @@
 #include "lcd_driver.h"
 #include "render_lcd.h"
 
+#define int_min(a, b) (((a) < (b)) ? (a) : (b))
+
+#if CONFIG_IDF_TARGET_ESP32S31
+static const TickType_t scan_timeout = pdMS_TO_TICKS(250);
+static const TickType_t prefill_timeout = pdMS_TO_TICKS(1000);
+static int s_prefill_lines = 126;
+#endif
+
 // declare vector optimized line mask application.
+#if CONFIG_IDF_TARGET_ESP32S3
 void epd_apply_line_mask_VE(uint8_t* line, const uint8_t* mask, int mask_len);
+#endif
 
 __attribute__((optimize("O3"))) static bool IRAM_ATTR
 retrieve_line_isr(RenderContext_t* ctx, uint8_t* buf) {
@@ -51,6 +63,13 @@ retrieve_line_isr(RenderContext_t* ctx, uint8_t* buf) {
         ctx->error |= EPD_DRAW_EMPTY_LINE_QUEUE;
         memset(buf, 0x00, ctx->display_width / 4);
     }
+#if CONFIG_IDF_TARGET_ESP32S31
+    if (xPortInIsrContext()) {
+        xSemaphoreGiveFromISR(ctx->feed_space[thread], &awoken);
+    } else {
+        xSemaphoreGive(ctx->feed_space[thread]);
+    }
+#endif
 
     if (ctx->lines_consumed >= ctx->display_height) {
         memset(buf, 0x00, ctx->display_width / 4);
@@ -70,6 +89,32 @@ static void IRAM_ATTR handle_lcd_frame_done(RenderContext_t* ctx) {
     portYIELD_FROM_ISR();
 }
 
+#if CONFIG_IDF_TARGET_ESP32S31
+static bool wait_for_prefill(RenderContext_t* ctx) {
+    const TickType_t started = xTaskGetTickCount();
+    for (int i = 0; i < NUM_RENDER_THREADS; i++) {
+        const int count = (ctx->lines_total + NUM_RENDER_THREADS - 1 - i) / NUM_RENDER_THREADS;
+        const int requested = (s_prefill_lines + NUM_RENDER_THREADS - 1 - i) / NUM_RENDER_THREADS;
+        const int needed = int_min(int_min(count, requested), ctx->line_queues[i].size - 1);
+        while (atomic_load(&ctx->ready_lines[i]) < needed) {
+            if (ctx->error || xTaskGetTickCount() - started >= prefill_timeout) return false;
+            vTaskDelay(1);
+        }
+    }
+    return true;
+}
+
+static void wait_for_scan(RenderContext_t* ctx) {
+    if (xSemaphoreTake(ctx->frame_done, scan_timeout) != pdTRUE) {
+        epd_lcd_abort_frame();
+        xSemaphoreTake(ctx->frame_done, 0);  // A completion may have raced the timeout.
+        ctx->error |= EPD_DRAW_SCAN_TIMEOUT;
+    } else if (!epd_lcd_frame_complete()) {
+        ctx->error |= EPD_DRAW_SCAN_INCOMPLETE;
+    }
+}
+#endif
+
 void lcd_do_update(RenderContext_t* ctx) {
     epd_set_mode(1);
 
@@ -77,17 +122,40 @@ void lcd_do_update(RenderContext_t* ctx) {
         epd_lcd_frame_done_cb((frame_done_func_t)handle_lcd_frame_done, ctx);
         prepare_context_for_next_frame(ctx);
 
+#if CONFIG_IDF_TARGET_ESP32S31
+        for (int i = 0; i < NUM_RENDER_THREADS; i++) {
+            lq_reset(&ctx->line_queues[i]);
+            atomic_store(&ctx->ready_lines[i], 0);
+            xSemaphoreTake(ctx->feed_space[i], 0);
+            xTaskNotifyGive(ctx->feed_tasks[i]);
+        }
+        if (wait_for_prefill(ctx)) {
+            epd_lcd_line_source_cb((line_cb_func_t)retrieve_line_isr, ctx);
+            epd_lcd_start_frame();
+            wait_for_scan(ctx);
+        } else {
+            ctx->error |= EPD_DRAW_SCAN_TIMEOUT;
+        }
+        if (ctx->lines_consumed != ctx->lines_total) ctx->error |= EPD_DRAW_EMPTY_LINE_QUEUE;
+        if (ctx->error) {
+            for (int i = 0; i < NUM_RENDER_THREADS; i++) xSemaphoreGive(ctx->feed_space[i]);
+        }
+#else
         // start both feeder tasks
         xTaskNotifyGive(ctx->feed_tasks[!xPortGetCoreID()]);
         xTaskNotifyGive(ctx->feed_tasks[xPortGetCoreID()]);
 
         // transmission is started in renderer threads, now wait util it's done
         xSemaphoreTake(ctx->frame_done, portMAX_DELAY);
+#endif
 
         for (int i = 0; i < NUM_RENDER_THREADS; i++) {
             xSemaphoreTake(ctx->feed_done_smphr[i], portMAX_DELAY);
         }
 
+#if CONFIG_IDF_TARGET_ESP32S31
+        if (ctx->error) break;
+#endif
         ctx->current_frame++;
 
         // make the watchdog happy.
@@ -138,6 +206,11 @@ static void push_pixels_populate_line(RenderContext_t* ctx, int color) {
             ctx->line_mask[x / 4] |= 3U << (2 * (x & 3));
         }
     }
+#if CONFIG_IDF_TARGET_ESP32S31
+    for (int i = 0; i < ctx->display_width / 4; i++) {
+        ctx->line_mask[i] = epd_lcd_order_drive_pairs(ctx->line_mask[i]);
+    }
+#endif
     memset(ctx->static_line_buffer, fill_byte, ctx->display_width / 4);
     epd_apply_line_mask(ctx->static_line_buffer, ctx->line_mask, ctx->display_width / 4);
 
@@ -157,18 +230,25 @@ void epd_push_pixels_lcd(RenderContext_t* ctx, short time, int color) {
 
     epd_set_mode(1);
     epd_lcd_start_frame();
+#if CONFIG_IDF_TARGET_ESP32S31
+    wait_for_scan(ctx);
+    epd_lcd_frame_done_cb(NULL, NULL);
+    epd_lcd_line_source_cb(NULL, NULL);
+    if (ctx->lines_consumed != ctx->lines_total) ctx->error |= EPD_DRAW_EMPTY_LINE_QUEUE;
+#else
     xSemaphoreTake(ctx->frame_done, portMAX_DELAY);
+#endif
     epd_set_mode(0);
 
     ctx->static_line_buffer = NULL;
 }
 
-#define int_min(a, b) (((a) < (b)) ? (a) : (b))
-
 // 每帧开扫之前先算好多少行。这段预填是帧与帧之间的空档：行队列只要跑在 DMA 前面
 // 就行，一行 16us 才消费一条，喂线程几微秒就算完一条，所以预填不需要很多；太少了
 // 会在 ISR 延迟抖动时欠载（EPD_DRAW_EMPTY_LINE_QUEUE）。
+#if !CONFIG_IDF_TARGET_ESP32S31
 static int s_prefill_lines = 127;
+#endif
 
 void epd_lcd_set_prefill_lines(int lines) {
     if (lines < 4) lines = 4;
@@ -178,6 +258,35 @@ void epd_lcd_set_prefill_lines(int lines) {
 int epd_lcd_prefill_lines(void) {
     return s_prefill_lines;
 }
+#if CONFIG_IDF_TARGET_ESP32S31
+void IRAM_ATTR lcd_calculate_frame(RenderContext_t* ctx, int thread_id) {
+    LineQueue_t* queue = &ctx->line_queues[thread_id];
+    int min_y, max_y, stride, pixels_per_byte;
+    const uint8_t* src;
+    get_buffer_params(ctx, &stride, &src, &min_y, &max_y, &pixels_per_byte);
+
+    for (int row = thread_id; row < ctx->lines_total && !ctx->error; row += NUM_RENDER_THREADS) {
+        uint8_t* line = lq_current(queue);
+        while (line == NULL && !ctx->error) {
+            if (xSemaphoreTake(ctx->feed_space[thread_id], prefill_timeout) != pdTRUE) {
+                ctx->error |= EPD_DRAW_SCAN_TIMEOUT;
+                return;
+            }
+            line = lq_current(queue);
+        }
+        if (ctx->error) return;
+        if (row < min_y || row >= max_y || (ctx->drawn_lines && !ctx->drawn_lines[row - ctx->area.y])) {
+            memset(line, 0, queue->element_size);
+        } else {
+            ctx->lut_lookup_func((const uint32_t*)(src + stride * (row - min_y)), line,
+                                ctx->conversion_lut, ctx->display_width);
+            epd_apply_line_mask(line, ctx->line_mask, ctx->display_width / 4);
+        }
+        lq_commit(queue);
+        atomic_fetch_add(&ctx->ready_lines[thread_id], 1);
+    }
+}
+#else
 __attribute__((optimize("O3"))) void IRAM_ATTR
 lcd_calculate_frame(RenderContext_t* ctx, int thread_id) {
     assert(ctx->lut_lookup_func != NULL);
@@ -261,5 +370,6 @@ lcd_calculate_frame(RenderContext_t* ctx, int thread_id) {
         lq_commit(lq);
     }
 }
+#endif
 
 #endif

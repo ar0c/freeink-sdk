@@ -104,7 +104,7 @@ void epd_populate_line_mask(uint8_t* line_mask, const uint8_t* dirty_columns, in
             mask |= (dirty_columns[c + 1] & 0x0F) != 0 ? 0x30 : 0x00;
             mask |= (dirty_columns[c] & 0xF0) != 0 ? 0x0C : 0x00;
             mask |= (dirty_columns[c] & 0x0F) != 0 ? 0x03 : 0x00;
-            line_mask[c / 2] = mask;
+            line_mask[c / 2] = epd_lcd_order_drive_pairs(mask);
         }
     }
 }

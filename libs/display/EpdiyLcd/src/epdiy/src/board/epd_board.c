@@ -2,6 +2,13 @@
 
 #include <esp_log.h>
 #include <stddef.h>
+#include "sdkconfig.h"
+
+#if CONFIG_IDF_TARGET_ESP32S31
+#include <esp_cpu.h>
+#else
+#include <xtensa/core-macros.h>
+#endif
 
 #include "epdiy.h"
 
@@ -25,9 +32,15 @@ const EpdBoardDefinition* epd_board = NULL;
  * IRAM_ATTR 表示放入指令 RAM，加快执行速度。
  */
 void IRAM_ATTR epd_busy_delay(uint32_t cycles) {
+#if CONFIG_IDF_TARGET_ESP32S31
+    uint32_t start = esp_cpu_get_cycle_count();
+    while ((uint32_t)(esp_cpu_get_cycle_count() - start) < cycles) {
+    }
+#else
     volatile unsigned long counts = XTHAL_GET_CCOUNT() + cycles;
     while (XTHAL_GET_CCOUNT() < counts) {
     };
+#endif
 }
 
 /**

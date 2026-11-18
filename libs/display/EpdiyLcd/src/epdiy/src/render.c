@@ -171,7 +171,11 @@ __attribute__((optimize("O3"))) static int leading_skip_frames(
 }
 
 static inline int rounded_display_height() {
+#if CONFIG_IDF_TARGET_ESP32S31
+    return epd_height();
+#else
     return (((epd_height() + 7) / 8) * 8);
+#endif
 }
 
 // FIXME: fix misleading naming:
@@ -223,7 +227,7 @@ enum EpdDrawError IRAM_ATTR epd_draw_base(
         return EPD_DRAW_INVALID_CROP;
     }
 
-#ifdef RENDER_METHOD_LCD
+#if CONFIG_IDF_TARGET_ESP32S3
     if (mode & MODE_PACKING_1PPB_DIFFERENCE && render_context.conversion_lut_size > 1 << 10) {
         ESP_LOGI(
             "epdiy",
@@ -311,22 +315,40 @@ void epd_clear_area(EpdRect area) {
 }
 
 void epd_clear_area_cycles(EpdRect area, int cycles, int cycle_time) {
+#if CONFIG_IDF_TARGET_ESP32S31
+    render_context.error = EPD_DRAW_SUCCESS;
+#endif
     const short white_time = cycle_time;
     const short dark_time = cycle_time;
 
     for (int c = 0; c < cycles; c++) {
         for (int i = 0; i < 10; i++) {                       //  10 --->   3  20251124 test
-            epd_push_pixels(area, dark_time, 0);                  
+            epd_push_pixels(area, dark_time, 0);
+#if CONFIG_IDF_TARGET_ESP32S31
+            if (render_context.error) return;
+#endif
         }
         // 此面板擦白需要比压黑更多相位，否则容易停在浅灰。
         for (int i = 0; i < 13; i++) {
             epd_push_pixels(area, white_time, 1);
+#if CONFIG_IDF_TARGET_ESP32S31
+            if (render_context.error) return;
+#endif
         }
         for (int i = 0; i < 3; i++) {                       //  3 --->   1  20251124 test
-            epd_push_pixels(area, white_time, 2);            
+            epd_push_pixels(area, white_time, 2);
+#if CONFIG_IDF_TARGET_ESP32S31
+            if (render_context.error) return;
+#endif
         }
     }
 }
+
+#if CONFIG_IDF_TARGET_ESP32S31
+enum EpdDrawError epd_renderer_last_error(void) {
+    return render_context.error;
+}
+#endif
 
 bool epd_renderer_init(enum EpdInitOptions options) {
     if (renderer_ready) return true;
@@ -362,6 +384,10 @@ bool epd_renderer_init(enum EpdInitOptions options) {
     for (int i = 0; i < NUM_RENDER_THREADS; i++) {
         render_context.feed_done_smphr[i] = xSemaphoreCreateBinary();
         if (render_context.feed_done_smphr[i] == NULL) goto fail;
+#if CONFIG_IDF_TARGET_ESP32S31
+        render_context.feed_space[i] = xSemaphoreCreateBinary();
+        if (render_context.feed_space[i] == NULL) goto fail;
+#endif
     }
     render_context.line_threads = heap_caps_malloc(rounded_display_height(), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
     if (render_context.line_threads == NULL) goto fail;
@@ -370,6 +396,10 @@ bool epd_renderer_init(enum EpdInitOptions options) {
 
     int queue_len = (options & EPD_FEED_QUEUE_8) ? 8 : 32;
     if (epd_get_display()->bus_width == 16) queue_len = 64;
+#if CONFIG_IDF_TARGET_ESP32S31
+    // Two 64-slot internal SRAM queues yield up to 126 prefilled scan lines.
+    queue_len = 64;
+#endif
     for (int i = 0; i < NUM_RENDER_THREADS; i++) {
         render_context.line_queues[i] = lq_init(queue_len, render_context.display_width / 4);
         if (render_context.line_queues[i].bufs == NULL) goto fail;
@@ -406,6 +436,11 @@ void epd_renderer_deinit() {
         if (render_context.feed_done_smphr[i] != NULL) vSemaphoreDelete(render_context.feed_done_smphr[i]);
     }
     if (render_context.frame_done != NULL) vSemaphoreDelete(render_context.frame_done);
+#if CONFIG_IDF_TARGET_ESP32S31
+    for (int i = 0; i < NUM_RENDER_THREADS; i++) {
+        if (render_context.feed_space[i] != NULL) vSemaphoreDelete(render_context.feed_space[i]);
+    }
+#endif
     heap_caps_free(render_context.conversion_lut);
     if (board_init_attempted && board != NULL) {
         epd_control_reg_deinit();
@@ -416,7 +451,7 @@ void epd_renderer_deinit() {
     renderer_ready = false;
 }
 
-#ifdef RENDER_METHOD_LCD
+#if CONFIG_IDF_TARGET_ESP32S3
 uint32_t epd_interlace_4bpp_line_VE(
     const uint8_t* to,
     const uint8_t* from,
@@ -459,6 +494,7 @@ __attribute__((optimize("O3"))) bool _epd_interlace_line(
     uint8_t* col_dirtyness,
     int fb_width
 ) {
+#if CONFIG_IDF_TARGET_ESP32S3
     // Use Vector Extensions with the ESP32-S3.
     // Both input buffers should have the same alignment w.r.t. 16 bytes,
     // as asserted in epd_difference_image_base.
@@ -486,6 +522,9 @@ __attribute__((optimize("O3"))) bool _epd_interlace_line(
         unaligned_len_back_px
     );
     return dirty;
+#else
+    return _interlace_line_unaligned(to, from, interlaced, col_dirtyness, fb_width);
+#endif
 }
 
 void epd_difference_column_range(EpdRect crop_to, int* x_start, int* x_end) {

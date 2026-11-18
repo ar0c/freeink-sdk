@@ -423,6 +423,7 @@ void FrontlightManager::apply() {
   if (fl.gpio == BoardConfig::PIN_UNASSIGNED) return;
 
   const uint32_t full = maxDuty(fl.pwmResolutionBits);
+  const uint32_t limit = full * (fl.maxDutyPercent < 100 ? fl.maxDutyPercent : 100) / 100u;
   const bool dual = fl.gpioWarm != BoardConfig::PIN_UNASSIGNED;
 
   // Convert brightness to PWM precision BEFORE splitting it between channels.
@@ -430,11 +431,11 @@ void FrontlightManager::apply() {
   // levels: brightness=1, warmth=50 previously became cool=0% + warm=0%.
   // Splitting the total duty also keeps cool+warm equal to the requested total.
   uint32_t totalDuty = 0;
-  if (_useLevel && _brightnessLevel > 0) {
+  if (_useLevel && _brightnessLevel > 0 && limit > 0) {
     const uint32_t n = static_cast<uint32_t>(_brightnessLevel - 1u);
-    totalDuty = 1u + (n * n * (full - 1u)) / (254u * 254u);
+    totalDuty = 1u + (n * n * (limit - 1u)) / (254u * 254u);
   } else if (!_useLevel) {
-    totalDuty = perceptualDuty(_brightness, full);
+    totalDuty = limit == 0 ? 0 : perceptualDuty(_brightness, limit);
   }
   uint32_t warmDuty = 0;
   uint32_t coolDuty = totalDuty;

@@ -9,7 +9,6 @@
 #include <stdint.h>
 
 #include <esp_err.h>
-#include <xtensa/core-macros.h>
 
 /**
  * State of display control pins.

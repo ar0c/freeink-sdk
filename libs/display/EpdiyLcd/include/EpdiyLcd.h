@@ -13,6 +13,9 @@
 
 #include <Arduino.h>
 
+struct EpdDisplay;
+struct EpdWaveform;
+
 namespace freeink {
 
 /// 板级电源钩子。与 LgfxEpdPowerHooks 同形，但定义在这里，避免本库反向依赖
@@ -58,6 +61,10 @@ struct EpdiyLcdConfig {
   EpdiyLcdLineTiming line;
   uint8_t prefillLines;  ///< 每相开扫前的预填行数，决定帧间隙。
   EpdiyLcdPowerHooks power;
+  // S31 requires a board-supplied 8-bit panel and waveform. Existing S3
+  // boards can retain the library's default E0470 display.
+  const EpdDisplay* display = nullptr;
+  const EpdWaveform* textTurnWaveform = nullptr;
 };
 
 /// 刷新档位，映射到 epdiy 的 MODE_*。/ Refresh profile, mapped onto epdiy MODE_*.

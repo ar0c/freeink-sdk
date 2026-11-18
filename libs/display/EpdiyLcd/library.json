@@ -2,8 +2,8 @@
   "name": "EpdiyLcd",
   "version": "1.0.0",
   "license": "Apache-2.0 AND LGPL-3.0-or-later",
-  "description": "epdiy LCD-output path (ESP32-S3 LCD_CAM + GDMA + RMT) for raw-parallel e-paper. Vendored from the vendor trimmed epdiy v2.0.0 fork; see src/epdiy/LICENSE (LGPL-3.0-or-later).",
-  "keywords": "epaper, epdiy, lcd, esp32s3, parallel",
+  "description": "epdiy LCD-output paths for ESP32-S3 and ESP32-S31 raw-parallel e-paper. Vendored from epdiy v2.0.0; see src/epdiy/LICENSE (LGPL-3.0-or-later).",
+  "keywords": "epaper, epdiy, lcd, esp32s3, esp32s31, parallel",
   "authors": [
     {"name": "epdiy contributors", "url": "https://github.com/vroland/epdiy", "maintainer": false},
     {"name": "FreeInk SDK Contributors"}

@@ -163,6 +163,8 @@ enum EpdDrawError {
     ///
     /// Reduce the display clock speed.
     EPD_DRAW_EMPTY_LINE_QUEUE = 0x400,
+    EPD_DRAW_SCAN_TIMEOUT = 0x800,
+    EPD_DRAW_SCAN_INCOMPLETE = 0x1000,
 };
 
 /// The default draw mode (non-flashy refresh, whith previously white screen).

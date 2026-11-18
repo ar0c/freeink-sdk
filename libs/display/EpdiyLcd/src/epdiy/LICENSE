@@ -11,9 +11,11 @@ License: LGPL-3.0-or-later (see COPYING.LESSER in this directory)
 - src/render.c / highlevel.c：差分按列裁剪、按 (from,to) 直方图无损跳过前导空相位、
   统计各阶段耗时；output_lcd/render_lcd.c：可配置的帧前预填行数
 
-This directory is a trimmed fork of epdiy v2.0.0: only the ESP32-S3 LCD render
-path and the display definition for this board are kept. Local changes are
-listed above.
+This directory is a trimmed fork of epdiy v2.0.0. Local changes listed above
+include keeping the ESP32-S3 LCD render path and its default display definition.
+The separate ESP32-S31 transport uses the open-source Metalio E-Ink 4 Plus
+2.0.79 reference (CloudZao/Metalio-E-INK4-Plus@14aa1d06) for timing and pixel
+order. It still requires a board-supplied panel definition and waveform.
 
 The full text of the GNU Lesser General Public License version 3 ships with this
 directory as COPYING.LESSER, together with COPYING for the GNU General Public

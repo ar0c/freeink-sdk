@@ -80,6 +80,9 @@
 #ifndef FREEINK_DEVICE_METALIO_EINK4
 #define FREEINK_DEVICE_METALIO_EINK4 0
 #endif
+#ifndef FREEINK_DEVICE_METALIO_EINK4_PLUS
+#define FREEINK_DEVICE_METALIO_EINK4_PLUS 0
+#endif
 #ifndef FREEINK_DEVICE_ONEPAGE
 #define FREEINK_DEVICE_ONEPAGE 0
 #endif
@@ -104,7 +107,8 @@
       FREEINK_DEVICE_M5 || FREEINK_DEVICE_MURPHY || FREEINK_DEVICE_DELINK || FREEINK_DEVICE_LILYGO ||          \
       FREEINK_DEVICE_M5PAPER || FREEINK_DEVICE_STICKY || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_PAPERS3 || \
       FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_WAVESHARE_EPAPER_397 ||             \
-      FREEINK_DEVICE_ONEPAGE || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO)
+      FREEINK_DEVICE_ONEPAGE || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_METALIO_EINK4_PLUS ||          \
+      FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO)
 #error \
     "FreeInk: no device selected. Pass at least one -DFREEINK_DEVICE_<NAME> (X4, X3, X4PRO, X4CLASSIC, M5, MURPHY, DELINK, LILYGO, M5PAPER, STICKY, PAPERMONO, PAPERS3, MURPHY_M4, EEGO_A4, WAVESHARE_EPAPER_397, METALIO_EINK4, ONEPAGE, READPICO, WS397, PICCO) in your build env — see platformio.sample.ini."
 #endif
@@ -120,9 +124,13 @@
    FREEINK_DEVICE_PAPERS3 || FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 ||                          \
    FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO)
 #define FREEINK_MCU_ESP32 (FREEINK_DEVICE_M5PAPER)
-#if (FREEINK_MCU_C3 + FREEINK_MCU_C61 + FREEINK_MCU_S3 + FREEINK_MCU_ESP32) != 1
+#define FREEINK_MCU_S31 (FREEINK_DEVICE_METALIO_EINK4_PLUS)
+#if (FREEINK_MCU_C3 + FREEINK_MCU_C61 + FREEINK_MCU_S3 + FREEINK_MCU_ESP32 + FREEINK_MCU_S31) != 1
 #error \
     "FreeInk: all selected devices must share one MCU family — ESP32-C3 (X3/X4), ESP32-C61 (OnePage), ESP32-S3 (M5/Murphy/de-link/LilyGo/Sticky/X4Pro), or ESP32 (M5Paper). Build one binary per family."
+#endif
+#if FREEINK_MCU_S31 && !CONFIG_IDF_TARGET_ESP32S31
+#error "FreeInk: the Metalio E-Ink 4 Plus requires a dedicated ESP32-S31 build"
 #endif
 
 // --- 3) Derive panel drivers from the device set -----------------------------
@@ -212,7 +220,7 @@
 // exactly the 花屏/错位/撕裂 symptom (read-pico.md §2.4 item 3 / blocker B4).
 // Read Pico therefore links EpdiyLcd (epdiy's LCD output path) instead of M5GFX.
 // Derived from the device, like every other FREEINK_DRIVER_* flag.
-#if FREEINK_DEVICE_READPICO
+#if FREEINK_DEVICE_READPICO || FREEINK_DEVICE_METALIO_EINK4_PLUS
 #define FREEINK_DRIVER_EPDIY_LCD 1
 #else
 #define FREEINK_DRIVER_EPDIY_LCD 0
@@ -261,7 +269,8 @@
 #ifndef FREEINK_CAP_FRONTLIGHT
 #define FREEINK_CAP_FRONTLIGHT                                                                        \
   (FREEINK_DEVICE_DELINK || FREEINK_DEVICE_MURPHY || FREEINK_DEVICE_LILYGO || FREEINK_DEVICE_X4PRO || \
-   FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_PICCO)
+   FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_PICCO || \
+   FREEINK_DEVICE_METALIO_EINK4_PLUS)
 #endif
 // Warm/cool color-temperature frontlight: a second warm PWM channel on top of
 // the brightness one (FrontlightConfig::gpioWarm). Sub-capability of
@@ -270,7 +279,8 @@
 // the profile's gpioWarm stays the runtime truth (hasColorTemperature()).
 #ifndef FREEINK_CAP_WARMLIGHT
 #define FREEINK_CAP_WARMLIGHT \
-  (FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_PICCO)
+  (FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_EEGO_A4 || FREEINK_DEVICE_PICCO || \
+   FREEINK_DEVICE_METALIO_EINK4_PLUS)
 #endif
 // USB Mass Storage ("USB Transfer" mode): exposes the SD card to a host over
 // USB-MSC. OPT-IN (default off), NOT board-derived, so a board enables it in
@@ -335,7 +345,8 @@
 #ifndef FREEINK_BATTERY_I2C_GAUGE
 #define FREEINK_BATTERY_I2C_GAUGE                                                                                \
   (FREEINK_DEVICE_X3 || FREEINK_DEVICE_LILYGO || FREEINK_DEVICE_STICKY || FREEINK_DEVICE_X4PRO ||                 \
-   FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO)
+   FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_METALIO_EINK4 || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || \
+   FREEINK_DEVICE_PICCO || FREEINK_DEVICE_METALIO_EINK4_PLUS)
 #endif
 #ifndef FREEINK_CAP_COLOR
 #define FREEINK_CAP_COLOR (FREEINK_DEVICE_M5)
@@ -398,7 +409,8 @@
 // DRAM next to the ~56.5 KiB of internal-DMA LUT tables the Lgfx path already
 // needs (docs/engineering/read-pico.md 2.6).
 #ifndef FREEINK_FB_PSRAM
-#define FREEINK_FB_PSRAM (FREEINK_DEVICE_M5PAPER || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_READPICO)
+#define FREEINK_FB_PSRAM \
+  (FREEINK_DEVICE_M5PAPER || FREEINK_DEVICE_PAPERMONO || FREEINK_DEVICE_READPICO || FREEINK_DEVICE_METALIO_EINK4_PLUS)
 #endif
 
 // SD transport. de-link (4-bit) and X4 Pro (1-bit) are wired for SDMMC; SdFat
@@ -412,7 +424,7 @@
 #define FREEINK_SD_SDMMC                                                                                       \
   (FREEINK_DEVICE_DELINK || FREEINK_DEVICE_X4PRO || FREEINK_DEVICE_X4CLASSIC || FREEINK_DEVICE_PAPERMONO ||     \
    FREEINK_DEVICE_MURPHY_M4 || FREEINK_DEVICE_WAVESHARE_EPAPER_397 || FREEINK_DEVICE_METALIO_EINK4 ||          \
-   FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO)
+   FREEINK_DEVICE_READPICO || FREEINK_DEVICE_WS397 || FREEINK_DEVICE_PICCO || FREEINK_DEVICE_METALIO_EINK4_PLUS)
 #endif
 
 // Serial log transport hint for consumer firmware. Boards can share the same MCU
@@ -476,6 +488,7 @@ enum class Board : uint8_t {
   WsEpaper397,  // SDK-managed Waveshare power and ordinary buttons.
   MetalioEInk4,  // Upstream identity; legacy spelling retained for caller compatibility.
   Picco,  // Onyx Picco / BOOX Tiles; SSD1677/SSD2677 auto-detection.
+  MetalioEink4Plus,
 };
 
 // How the board reports button presses.
@@ -700,6 +713,8 @@ struct FrontlightConfig {
   // on. pwmFrequency still applies (PM1 PWM_FREQ register); resolution is the
   // PM1's fixed 12 bits.
   bool viaPm1Pwm = false;
+  // Aggregate cool/warm duty as a percent of the hardware PWM range.
+  uint8_t maxDutyPercent = 100;
 };
 
 // I2C frontlight controller (LM3630A on the EEGO A4). The controller is driven
@@ -2214,6 +2229,36 @@ static_assert(READ_PICO.touch.controller == TouchController::Cst836u &&
                   READ_PICO.touch.irq == 43 && READ_PICO.touch.irqActiveLow,
               "Read Pico CST836U INT# is GPIO43, open-drain active-low");
 
+// Profile inputs from CloudZao/Metalio-E-INK4-Plus at stock 2.0.79
+// (14aa1d06), config.h and periph/frontlight.cc. The LCD driver still
+// requires explicit panel waveform and rail hooks from the board owner.
+constexpr BoardProfile METALIO_EINK4_PLUS = {
+    .board = Board::MetalioEink4Plus,
+    .name = "metalio_eink4_plus",
+    .inputStyle = InputStyle::DigitalButtons,
+    .displayController = DisplayController::LgfxEpd,
+    .displayWidth = 1216,
+    .displayHeight = 684,
+    .display = {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED,
+                PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED},
+    .displaySpiHz = 0,
+    .sd = {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, false, 0},
+    .input = {PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED,
+              PIN_UNASSIGNED, PIN_UNASSIGNED, PIN_UNASSIGNED, false},
+    .batteryAdc = PIN_UNASSIGNED,
+    .batteryChargeStatus = PIN_UNASSIGNED,
+    .batteryDividerMultiplier = 1.0f,
+    .usbDetect = PIN_UNASSIGNED,
+    .touch = NO_TOUCH,  // Shared expander reset and key events need board hooks.
+    .frontlight = {6, 20000, 10, true, 7, false, 10},
+    .audio = NO_AUDIO,
+    .leds = NO_LEDS,
+    .orientation = NO_FLIP,
+    .sdmmc = {24, 25, 20, 21, 22, 23, 4},
+    .batteryGauge = {0, 1, 400000, 0x55, 0, 1},  // BQ27220 reads only; CX25601N needs its own driver.
+    .grayscaleLevels = 16,
+};
+
 // Largest framebuffer (bytes) over the devices compiled into this build, derived
 // from the profiles above. The display facade sizes its static framebuffer to
 // this so one binary holds whichever panel is runtime-selected; a single-device
@@ -2247,12 +2292,15 @@ constexpr uint32_t MAX_FRAMEBUFFER_BYTES_COMPILED_IN = cmax(cmax(cmax(cmax(FREEI
 // is folded in as the outer call's second argument.
 constexpr uint32_t MAX_FRAMEBUFFER_BYTES =
     cmax(cmax(MAX_FRAMEBUFFER_BYTES_COMPILED_IN, FREEINK_DEVICE_PICCO ? panelBytes(PICCO) : 0u),
-         FREEINK_DEVICE_READPICO ? panelBytes(READ_PICO) : 0u);
+         cmax(FREEINK_DEVICE_READPICO ? panelBytes(READ_PICO) : 0u,
+              FREEINK_DEVICE_METALIO_EINK4_PLUS ? panelBytes(METALIO_EINK4_PLUS) : 0u));
 
 // Compile-time default device — the profile ACTIVE starts as. With a single
 // device in the build this is the only device; with several same-MCU devices it
 // is the boot default until the consumer calls selectDevice().
-#if FREEINK_DEVICE_METALIO_EINK4
+#if FREEINK_DEVICE_METALIO_EINK4_PLUS
+constexpr BoardProfile DEFAULT_DEVICE = METALIO_EINK4_PLUS;
+#elif FREEINK_DEVICE_METALIO_EINK4
 constexpr BoardProfile DEFAULT_DEVICE = METALIO_EINK4;
 #elif FREEINK_DEVICE_WS397
 constexpr BoardProfile DEFAULT_DEVICE = WS_EPAPER_397;

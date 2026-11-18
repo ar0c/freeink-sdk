@@ -37,6 +37,9 @@ extern "C" {
 #include "epdiy/src/epd_display.h"
 #include "epdiy/src/epd_highlevel.h"
 #include "epdiy/src/epdiy.h"
+#if CONFIG_IDF_TARGET_ESP32S31
+#include "epdiy/src/render.h"
+#endif
 }
 
 namespace freeink {
@@ -176,6 +179,16 @@ const EpdBoardDefinition kBoard = {
 
 bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, bool blackIsOne) {
   if (g_started) return g_fb4 != nullptr;
+#if CONFIG_IDF_TARGET_ESP32S31
+  if (cfg.display == nullptr || cfg.power.prepare == nullptr || cfg.power.powerOn == nullptr ||
+      cfg.power.powerOff == nullptr) return false;
+#endif
+  const EpdDisplay_t& panel = cfg.display != nullptr ? *cfg.display : E0470_DISPLAY;
+  if (cfg.display != nullptr && (panel.width != width || panel.height != height ||
+                                 panel.bus_width != cfg.busWidth || panel.default_waveform == nullptr)) {
+    ESP_LOGE("EpdiyLcd", "Invalid panel and bus configuration");
+    return false;
+  }
   g_cfg = &cfg;
   g_blackIsOne = blackIsOne;
 
@@ -184,7 +197,7 @@ bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, b
   e0470_waveform_init();
 
   epd_set_board(&kBoard);
-  if (!epd_init(&kBoard, &E0470_DISPLAY, EPD_OPTIONS_DEFAULT)) {
+  if (!epd_init(&kBoard, &panel, EPD_OPTIONS_DEFAULT)) {
     ESP_LOGE("EpdiyLcd", "LCD renderer initialization failed");
     return false;
   }
@@ -203,7 +216,7 @@ bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, b
     return false;
   }
 
-  g_hl = epd_hl_init(&E0470_WAVEFORM);
+  g_hl = epd_hl_init(cfg.display != nullptr ? panel.default_waveform : &E0470_WAVEFORM);
   g_fb4 = epd_hl_get_framebuffer(&g_hl);
   if (g_fb4 == nullptr) {
     epdiyLcdEnd();
@@ -231,6 +244,12 @@ bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, b
   }
   epd_clear();
   epd_poweroff();
+#if CONFIG_IDF_TARGET_ESP32S31
+  if (epd_renderer_last_error() != EPD_DRAW_SUCCESS) {
+    epdiyLcdEnd();
+    return false;
+  }
+#endif
   g_baselineKnown = true;
 
   const size_t bufBytes = static_cast<size_t>(width) / 2 * static_cast<size_t>(height);
@@ -281,6 +300,10 @@ enum EpdDrawMode drawModeFor(EpdiyLcdRefresh mode) {
 // and push it back to black, and that erase is the flash a turn shows. Every other
 // profile keeps the table epd_hl_init attached.
 const EpdWaveform* waveformFor(EpdiyLcdRefresh mode) {
+  if (g_cfg->display != nullptr) {
+    if (mode == EpdiyLcdRefresh::TextTurn && g_cfg->textTurnWaveform != nullptr) return g_cfg->textTurnWaveform;
+    return g_cfg->display->default_waveform;
+  }
   return mode == EpdiyLcdRefresh::TextTurn ? &E0470_TEXTTURN_WAVEFORM : &E0470_WAVEFORM;
 }
 
@@ -323,6 +346,12 @@ bool pushFrame(EpdiyLcdRefresh mode, bool turnOff) {
   }
   if (!g_baselineKnown) {
     epd_clear();
+#if CONFIG_IDF_TARGET_ESP32S31
+    if (epd_renderer_last_error() != EPD_DRAW_SUCCESS) {
+      epd_poweroff();
+      return false;
+    }
+#endif
     memset(g_hl.back_fb, 0xFF, static_cast<size_t>(epd_width()) / 2 * epd_height());
     mode = EpdiyLcdRefresh::Full;
   }
@@ -340,7 +369,7 @@ bool pushFrame(EpdiyLcdRefresh mode, bool turnOff) {
   // actually skip a pixel.
   const auto err = mode == EpdiyLcdRefresh::Full ? epd_hl_update_screen_full(&g_hl, drawModeFor(mode), temperature)
                                                  : epd_hl_update_screen(&g_hl, drawModeFor(mode), temperature);
-  if (swapWaveform) epd_hl_waveform(&g_hl, &E0470_WAVEFORM);
+  if (swapWaveform) epd_hl_waveform(&g_hl, waveformFor(EpdiyLcdRefresh::Full));
 #if FREEINK_READPICO_DIAGNOSTICS
   int diffMs, drawMs, copyMs;
   epd_hl_last_timing(&diffMs, &drawMs, &copyMs);
