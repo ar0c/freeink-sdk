@@ -37,6 +37,8 @@ extern "C" {
 #include "epdiy/src/epd_display.h"
 #include "epdiy/src/epd_highlevel.h"
 #include "epdiy/src/epdiy.h"
+#if CONFIG_IDF_TARGET_ESP32S31
+#endif
 }
 
 namespace freeink {
@@ -119,6 +121,7 @@ bool boardInit(uint32_t epdRowWidth) {
   c.bus.start_pulse = static_cast<gpio_num_t>(g_cfg->pinStartPulse);
   c.bus.leh = static_cast<gpio_num_t>(g_cfg->pinLeh);
   c.bus.stv = static_cast<gpio_num_t>(g_cfg->pinStv);
+  c.min_phase_interval_us = g_cfg->minPhaseIntervalUs;
 
   if (epd_lcd_init(&c, static_cast<int>(epd_width()), static_cast<int>(epd_height())) != ESP_OK) return false;
   epd_lcd_set_prefill_lines(g_cfg->prefillLines);
@@ -127,13 +130,11 @@ bool boardInit(uint32_t epdRowWidth) {
 
 void boardDeinit() { epd_lcd_deinit(); }
 
-// XOE 与 MODE 在 FCA9555 上，由 powerOn/powerOff 按顺序持有；本板没有 epdiy 假设的
-// 那个通用控制寄存器，所以这里是空实现。
-// / XOE and MODE live on the FCA9555 and are sequenced by powerOn/powerOff. This
-// board has no equivalent of epdiy's generic control register, so this is a no-op.
+// Boards that gate panel output during scanning handle the mode bit here.
 void boardSetCtrl(epd_ctrl_state_t* state, const epd_ctrl_state_t* const mask) {
-  (void)state;
-  (void)mask;
+  if (g_cfg != nullptr && g_cfg->power.setMode != nullptr && mask->ep_mode) {
+    g_cfg->power.setMode(state->ep_mode);
+  }
 }
 
 void boardPowerOn(epd_ctrl_state_t* state) {
@@ -149,11 +150,7 @@ void boardPowerOff(epd_ctrl_state_t* state) {
 
 void boardMeasureVcom(epd_ctrl_state_t* state) { (void)state; }
 
-// 硬规则：面板 VCOM 是出厂写进 PMU 的，与这块玻璃配对，写错会永久损坏面板。
-// epdiy 的 v6/v7 板才会实现这个回调；本板必须保持空实现。
-// / HARD RULE: the panel VCOM is factory-written in the PMU and paired with this
-// glass; a wrong value damages it permanently. Only epdiy's v6/v7 boards implement
-// this callback — on this board it must stay a no-op.
+// VCOM is panel-specific and managed only by the board power hook.
 void boardSetVcom(int vcomMv) { (void)vcomMv; }
 
 float boardGetTemperature() { return panelTemperature(); }
@@ -176,15 +173,25 @@ const EpdBoardDefinition kBoard = {
 
 bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, bool blackIsOne) {
   if (g_started) return g_fb4 != nullptr;
+#if CONFIG_IDF_TARGET_ESP32S31
+  if (cfg.display == nullptr || cfg.power.prepare == nullptr || cfg.power.powerOn == nullptr ||
+      cfg.power.powerOff == nullptr) return false;
+#endif
+  const EpdDisplay_t& panel = cfg.display != nullptr ? *cfg.display : E0470_DISPLAY;
+  if (cfg.display != nullptr && (panel.width != width || panel.height != height ||
+                                 panel.bus_width != cfg.busWidth || panel.default_waveform == nullptr)) {
+    ESP_LOGE("EpdiyLcd", "Invalid panel and bus configuration");
+    return false;
+  }
   g_cfg = &cfg;
   g_blackIsOne = blackIsOne;
 
   // 波形必须在 epd_hl_init 之前建好：E0470_WAVEFORM 的相位数据由它填。
   // / The waveform must be built before epd_hl_init(): it fills E0470_WAVEFORM.
-  e0470_waveform_init();
+  if (cfg.display == nullptr) e0470_waveform_init();
 
   epd_set_board(&kBoard);
-  if (!epd_init(&kBoard, &E0470_DISPLAY, EPD_OPTIONS_DEFAULT)) {
+  if (!epd_init(&kBoard, &panel, EPD_OPTIONS_DEFAULT)) {
     ESP_LOGE("EpdiyLcd", "LCD renderer initialization failed");
     return false;
   }
@@ -203,7 +210,7 @@ bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, b
     return false;
   }
 
-  g_hl = epd_hl_init(&E0470_WAVEFORM);
+  g_hl = epd_hl_init(cfg.display != nullptr ? panel.default_waveform : &E0470_WAVEFORM);
   g_fb4 = epd_hl_get_framebuffer(&g_hl);
   if (g_fb4 == nullptr) {
     epdiyLcdEnd();
@@ -229,9 +236,15 @@ bool epdiyLcdBegin(const EpdiyLcdConfig& cfg, uint16_t width, uint16_t height, b
     epdiyLcdEnd();
     return false;
   }
+#if CONFIG_IDF_TARGET_ESP32S31
+  // Factory initialization probes the rails and defers the first drive to GC16.
+  epd_poweroff();
+  g_baselineKnown = false;
+#else
   epd_clear();
   epd_poweroff();
   g_baselineKnown = true;
+#endif
 
   const size_t bufBytes = static_cast<size_t>(width) / 2 * static_cast<size_t>(height);
   // 白场按调用方的位约定展开，极性翻转时不会写错。
@@ -281,6 +294,10 @@ enum EpdDrawMode drawModeFor(EpdiyLcdRefresh mode) {
 // and push it back to black, and that erase is the flash a turn shows. Every other
 // profile keeps the table epd_hl_init attached.
 const EpdWaveform* waveformFor(EpdiyLcdRefresh mode) {
+  if (g_cfg->display != nullptr) {
+    if (mode == EpdiyLcdRefresh::TextTurn && g_cfg->textTurnWaveform != nullptr) return g_cfg->textTurnWaveform;
+    return g_cfg->display->default_waveform;
+  }
   return mode == EpdiyLcdRefresh::TextTurn ? &E0470_TEXTTURN_WAVEFORM : &E0470_WAVEFORM;
 }
 
@@ -322,7 +339,9 @@ bool pushFrame(EpdiyLcdRefresh mode, bool turnOff) {
     return false;
   }
   if (!g_baselineKnown) {
+#if !CONFIG_IDF_TARGET_ESP32S31
     epd_clear();
+#endif
     memset(g_hl.back_fb, 0xFF, static_cast<size_t>(epd_width()) / 2 * epd_height());
     mode = EpdiyLcdRefresh::Full;
   }
@@ -340,7 +359,7 @@ bool pushFrame(EpdiyLcdRefresh mode, bool turnOff) {
   // actually skip a pixel.
   const auto err = mode == EpdiyLcdRefresh::Full ? epd_hl_update_screen_full(&g_hl, drawModeFor(mode), temperature)
                                                  : epd_hl_update_screen(&g_hl, drawModeFor(mode), temperature);
-  if (swapWaveform) epd_hl_waveform(&g_hl, &E0470_WAVEFORM);
+  if (swapWaveform) epd_hl_waveform(&g_hl, waveformFor(EpdiyLcdRefresh::Full));
 #if FREEINK_READPICO_DIAGNOSTICS
   int diffMs, drawMs, copyMs;
   epd_hl_last_timing(&diffMs, &drawMs, &copyMs);
@@ -356,8 +375,17 @@ bool pushFrame(EpdiyLcdRefresh mode, bool turnOff) {
                  static_cast<unsigned>(g_frameTiming.maxConvertUs), diffMs, drawMs, copyMs);
 #endif
   g_baselineKnown = err == EPD_DRAW_SUCCESS;
+#if CONFIG_IDF_TARGET_ESP32S31
+  (void)turnOff;
+  if (!g_baselineKnown) {
+    ESP_LOGE("EpdiyLcd", "S31 scan failed (%u); display disabled until reboot", static_cast<unsigned>(err));
+    g_started = false;
+  }
+  epd_poweroff();
+#else
   if (!g_baselineKnown) ESP_LOGE("EpdiyLcd", "Frame failed (%u); clean retry required", static_cast<unsigned>(err));
   if (turnOff || !g_baselineKnown) epd_poweroff();
+#endif
   return g_baselineKnown;
 }
 
@@ -463,7 +491,7 @@ bool epdiyLcdDrawGray(const uint8_t* lsb, const uint8_t* msb, EpdiyLcdRefresh mo
 }
 
 void epdiyLcdDeepSleep() {
-  if (!g_started) return;
+  if (!g_initialized) return;
   (void)epd_poweroff();
   epdiyLcdEnd();
 }

@@ -155,8 +155,8 @@ void PowerManager::waitForPowerButtonRelease() {
 
 namespace {
 // Drive a rail pin to `level` and latch it so the level survives deep
-// sleep (requires gpio_deep_sleep_hold_en(), done in deepSleep()). gpio_hold_dis
-// first: a hold left over from a previous cycle would make the writes no-ops.
+// sleep. Targets with a global hold gate enable it in deepSleep(). Release any
+// previous hold first so that it cannot mask these writes.
 void holdRailLevel(int8_t pin, uint8_t level) {
   if (pin < 0) return;
   const auto g = static_cast<gpio_num_t>(pin);
@@ -218,8 +218,11 @@ void PowerManager::deepSleep() {
       delay(1000);
     }
   }
+#if !FREEINK_MCU_S31 || CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND || CONFIG_PM_SLP_DISABLE_GPIO
+  // The S31 prebuilt IDF only links this helper when GPIO sleep isolation is configured.
   esp_sleep_config_gpio_isolate();
-#if !FREEINK_MCU_C61
+#endif
+#if !FREEINK_MCU_C61 && !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP
   gpio_deep_sleep_hold_en();
 #endif
   esp_deep_sleep_start();

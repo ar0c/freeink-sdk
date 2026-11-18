@@ -8,10 +8,12 @@
 // Board glue for the vendor epdiy LCD fork (LGPL-3.0-or-later).
 // Local highlevel changes retain the baseline on draw failure, check allocations,
 // and release owned buffers; see test/host/test_transactions.py.
-// Linked only on raw parallel targets. Panel VCOM remains the factory PMU value;
-// the epdiy set_vcom callback never writes it.
+// Linked only on raw parallel targets. The board power hook owns VCOM policy.
 
 #include <Arduino.h>
+
+struct EpdDisplay;
+struct EpdWaveform;
 
 namespace freeink {
 
@@ -21,7 +23,7 @@ namespace freeink {
 /// library does not depend back on FreeInkDisplay. powerOn must report successful rail bring-up.
 struct EpdiyLcdPowerHooks {
   bool (*prepare)();   ///< 上电前：引脚归安全电平，轨全部关。/ Park pins, rails down.
-  bool (*powerOn)();   ///< VCOM 校验通过后才升轨。/ Raise rails after the VCOM check.
+  bool (*powerOn)();   ///< Bring up the rails and confirm they are ready.
   void (*powerOff)();  ///< 掉轨。/ Drop rails.
   /// 面板温度，用来选波形的温度档。nullptr 或返回值不在 0..50 时按 20 °C 处理。
   /// 本板波形只有一个 0–50 °C 档，所以这个值不改变选表结果。
@@ -29,6 +31,8 @@ struct EpdiyLcdPowerHooks {
   /// value outside 0..50, falls back to 20 °C — this board's table has a single
   /// 0–50 °C range, so the value does not change which phases run.
   float (*getTemperature)();
+  // Optional external panel mode/output-enable control during a scan.
+  void (*setMode)(bool enabled) = nullptr;
 };
 
 /// 一行四段 + CKV，单位是像素钟个数（ckv 是 0.1µs）。对应 epdiy 的
@@ -58,6 +62,11 @@ struct EpdiyLcdConfig {
   EpdiyLcdLineTiming line;
   uint8_t prefillLines;  ///< 每相开扫前的预填行数，决定帧间隙。
   EpdiyLcdPowerHooks power;
+  // S31 requires a board-supplied 8-bit panel and waveform. Existing S3
+  // boards can retain the library's default E0470 display.
+  const EpdDisplay* display = nullptr;
+  const EpdWaveform* textTurnWaveform = nullptr;
+  uint16_t minPhaseIntervalUs = 0;
 };
 
 /// 刷新档位，映射到 epdiy 的 MODE_*。/ Refresh profile, mapped onto epdiy MODE_*.

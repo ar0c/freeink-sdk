@@ -31,6 +31,7 @@ typedef struct {
     LcdLineTiming_t line;
     int bus_width;
     lcd_bus_config_t bus;
+    uint16_t min_phase_interval_us;
 } LcdEpdConfig_t;
 
 esp_err_t epd_lcd_init(const LcdEpdConfig_t* config, int display_width, int display_height);

@@ -1,0 +1,8 @@
+{
+  "name": "BoardMetalioEInk4Plus",
+  "version": "0.1.0",
+  "description": "Metalio E-Ink 4 Plus panel power and factory waveform for FreeInk's S31 LCD transport.",
+  "license": "Apache-2.0 AND MIT",
+  "platforms": "espressif32",
+  "frameworks": ["arduino"]
+}

@@ -8,7 +8,7 @@
 #include "esp_intr_alloc.h"
 #include "hal/gpio_types.h"
 
-#ifdef RENDER_METHOD_LCD
+#if CONFIG_IDF_TARGET_ESP32S3
 
 #include <assert.h>
 #include <esp_idf_version.h>
@@ -856,13 +856,6 @@ void IRAM_ATTR epd_lcd_start_frame() {
     lcd_ll_start(lcd.hal.dev);
 
     taskEXIT_CRITICAL(&frame_start_spinlock);
-}
-
-#else
-
-/// Dummy implementation to link on the old ESP32
-esp_err_t epd_lcd_init(const LcdEpdConfig_t* config, int display_width, int display_height) {
-    return ESP_ERR_NOT_SUPPORTED;
 }
 
 #endif  // S3 Target

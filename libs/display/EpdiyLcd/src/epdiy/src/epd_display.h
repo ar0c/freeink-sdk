@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "epd_internals.h"
 
-typedef struct {
+typedef struct EpdDisplay {
     /// Width of the display in pixels.
     int width;
     /// Height of the display in pixels.
