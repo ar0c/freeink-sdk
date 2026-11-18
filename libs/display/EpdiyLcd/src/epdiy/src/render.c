@@ -344,12 +344,6 @@ void epd_clear_area_cycles(EpdRect area, int cycles, int cycle_time) {
     }
 }
 
-#if CONFIG_IDF_TARGET_ESP32S31
-enum EpdDrawError epd_renderer_last_error(void) {
-    return render_context.error;
-}
-#endif
-
 bool epd_renderer_init(enum EpdInitOptions options) {
     if (renderer_ready) return true;
     const EpdBoardDefinition* board = epd_current_board();

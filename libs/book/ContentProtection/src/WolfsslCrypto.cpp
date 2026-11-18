@@ -30,7 +30,8 @@
 #include <wolfssl/wolfcrypt/sha.h>
 #include <wolfssl/wolfcrypt/sha256.h>
 
-#if defined(ESP_PLATFORM)
+#if defined(ESP_PLATFORM) && __has_include(<mbedtls/rsa.h>)
+#define FREEINK_USE_MBEDTLS_RSA_KEYGEN 1
 #include <mbedtls/esp_mbedtls_random.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
@@ -239,7 +240,7 @@ bool WolfsslCrypto::rsaGenerate(RsaKeyPairDer* out) {
     lastError = "rng not initialized";
     return false;
   }
-#if defined(ESP_PLATFORM)
+#if defined(FREEINK_USE_MBEDTLS_RSA_KEYGEN)
   // wolfSSL 5.7.2's Tom's Fast Math key-generation path is unstable on the
   // ESP32-C3 (the Miller-Rabin test faults in fp_mul_comba). ESP-IDF already
   // ships mbedTLS with RSA key generation enabled, so use it for this one

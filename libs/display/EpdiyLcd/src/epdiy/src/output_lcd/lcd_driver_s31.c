@@ -18,6 +18,7 @@
 #include <esp_private/periph_ctrl.h>
 #include <esp_rom_gpio.h>
 #include <esp_rom_sys.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <hal/axi_dma_ll.h>
@@ -56,6 +57,7 @@ static struct {
     int lines_fed;
     uint16_t ckv_high_ticks;
     uint16_t ckv_period_ticks;
+    int64_t last_phase_start_us;
     bool dma_connected;
     bool lcd_clock;
     bool rmt_clock;
@@ -402,6 +404,7 @@ static void start_on_irq_core(void* unused) {
     }
 
     taskENTER_CRITICAL(&start_lock);
+    scan.last_phase_start_us = esp_timer_get_time();
     gpio_set_level(scan.cfg.bus.stv, 0);
     rmt_compat_tx_configure_finite_loop(RMT_CKV, scan.scan_lines + 5);
     rmt_compat_tx_start(RMT_CKV);
@@ -416,7 +419,11 @@ static void start_on_irq_core(void* unused) {
 
 void epd_lcd_start_frame(void) {
     scan.frame_complete = false;
-    if (scan.frame_config_valid) esp_ipc_call_blocking(scan.irq_core, start_on_irq_core, NULL);
+    if (!scan.frame_config_valid) return;
+
+    const int64_t remaining_us = scan.last_phase_start_us + scan.cfg.min_phase_interval_us - esp_timer_get_time();
+    if (scan.last_phase_start_us != 0 && remaining_us > 0) esp_rom_delay_us((uint32_t)remaining_us);
+    esp_ipc_call_blocking(scan.irq_core, start_on_irq_core, NULL);
 }
 
 bool epd_lcd_frame_complete(void) {
