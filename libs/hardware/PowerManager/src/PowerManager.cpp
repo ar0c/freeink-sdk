@@ -218,7 +218,10 @@ void PowerManager::deepSleep() {
       delay(1000);
     }
   }
+#if !FREEINK_MCU_S31 || CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND || CONFIG_PM_SLP_DISABLE_GPIO
+  // The S31 prebuilt IDF only links this helper when GPIO sleep isolation is configured.
   esp_sleep_config_gpio_isolate();
+#endif
 #if !FREEINK_MCU_C61 && !SOC_GPIO_SUPPORT_HOLD_SINGLE_IO_IN_DSLP
   gpio_deep_sleep_hold_en();
 #endif
